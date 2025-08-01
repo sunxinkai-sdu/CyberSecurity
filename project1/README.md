@@ -43,7 +43,7 @@ T-table优化的核心思想是通过预计算来减少加密过程中的计算�
 非线性变换（S盒替换）、线性变换L（多个循环移位和异或）
 
 这两个操作可以合并为一个查表操作，将原本需要多次计算的操作简化为一次内存访问。
-#### 优势：
+#### 优势
 
 将S盒查找和线性变换合并为单次查表操作
 
@@ -53,3 +53,72 @@ T-table优化的核心思想是通过预计算来减少加密过程中的计算�
 
 内存访问模式规律，缓存友好
 ### 利用AES-NI优化SM4的原理
+#### 优化原理
+AES-NI指令集包含专门为AES设计的硬件指令，但我们可以利用其中的AESENC指令来加速SM4的S盒操作。原理是：
+
+SM4和AES的S盒都基于有限域逆运算
+
+通过仿射变换将SM4 S盒转换为AES S盒格式
+
+使用AESENC指令执行等效操作
+#### 实现思路
+```
+#include <immintrin.h>
+
+// 仿射变换矩阵（将SM4 S盒映射到AES S盒域）
+
+  const __m128i AFFINE_FWD = _mm_set_epi64x(0x0C0A020803090E07, 0x01040F060D0B0500);
+
+  const __m128i AFFINE_BWD = _mm_set_epi64x(0x070E090308020A0C, 0x00050B0D060F0401);
+
+// 使用AES-NI加速S盒变换
+__m128i sm4_sbox_aesni(__m128i x) {
+    // 前向仿射变换
+    x = _mm_gf2p8affine_epi64_epi8(x, AFFINE_FWD, 0);
+    
+    // 使用AESENC执行核心变换（等效于AES S盒）
+    __m128i zero = _mm_setzero_si128();
+    x = _mm_aesenc_si128(x, zero);
+    
+    // 反向仿射变换
+    return _mm_gf2p8affine_epi64_epi8(x, AFFINE_BWD, 0);
+}
+
+// 向量化加密（4分组并行）
+void sm4_encrypt_aesni(...) {
+    __m128i state0, state1, state2, state3;
+    // 加载4个分组
+    
+    for (int round = 0; round < 32; round++) {
+        __m128i rk_vec = _mm_set1_epi32(rk[round]);
+        __m128i tmp = _mm_xor_si128(state1, 
+                           _mm_xor_si128(state2, 
+                           _mm_xor_si128(state3, rk_vec)));
+        
+        // 使用AES-NI加速S盒
+        tmp = sm4_sbox_aesni(tmp);
+        
+        // 应用线性变换L
+        tmp = _mm_xor_si128(tmp, _mm_rol_epi32(tmp, 2));
+        tmp = _mm_xor_si128(tmp, _mm_rol_epi32(tmp, 10));
+        tmp = _mm_xor_si128(tmp, _mm_rol_epi32(tmp, 18));
+        tmp = _mm_xor_si128(tmp, _mm_rol_epi32(tmp, 24));
+        
+        // 更新状态
+        __m128i new_state = _mm_xor_si128(state0, tmp);
+        state0 = state1;
+        state1 = state2;
+        state2 = state3;
+        state3 = new_state;
+    }
+    // 存储结果
+}
+```
+#### 优势
+利用专用硬件指令，单周期完成S盒操作
+
+支持128位向量化，同时处理4个分组
+
+避免查表操作，减少内存访问
+
+对旁路攻击更有抵抗力
