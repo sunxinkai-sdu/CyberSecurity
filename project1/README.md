@@ -122,3 +122,61 @@ void sm4_encrypt_aesni(...) {
 避免查表操作，减少内存访问
 
 对旁路攻击更有抵抗力
+### 利用GFNI优化SM4的原理
+#### 优化原理
+GFNI（Galois Field New Instructions）是Intel推出的专用指令集，可直接在硬件层面执行伽罗瓦域运算。SM4的S盒可分解为：
+
+有限域GF(2⁸)上的逆运算、仿射变换
+
+GFNI提供直接支持这两种操作的指令。
+#### 实现思路
+```
+#include <immintrin.h>
+
+// GFNI参数（仿射变换矩阵）
+const __m128i GFNI_AFFINE = _mm_set_epi64x(0x1F3F5F7F1F3F5F7F, 0x0C0A020803090E07);
+const __m128i GFNI_INV = _mm_set_epi64x(0x0E05060F0D080180, 0x040703090A0B0C02);
+
+// 使用GFNI加速S盒
+__m128i sm4_sbox_gfni(__m128i x) {
+    // 有限域求逆
+    x = _mm_gf2p8affineinv_epi64_epi8(x, GFNI_INV, 0);
+    
+    // 仿射变换
+    return _mm_gf2p8affine_epi64_epi8(x, GFNI_AFFINE, 0);
+}
+
+// 完整轮函数优化
+void sm4_encrypt_gfni(...) {
+    // 与AES-NI类似，但使用GFNI指令
+    for (...) {
+        // ...
+        tmp = sm4_sbox_gfni(tmp);
+        
+        // 使用VPROLD加速线性变换（AVX512）
+        __m512i tmp512 = _mm512_broadcastd_epi32(tmp);
+        __m512i ltmp = _mm512_xor_si512(
+                   _mm512_xor_si512(
+                   _mm512_xor_si512(
+                   _mm512_rol_epi32(tmp512, 2),
+                   _mm512_rol_epi32(tmp512, 10)),
+                   _mm512_rol_epi32(tmp512, 18)),
+                   _mm512_rol_epi32(tmp512, 24));
+        // ...
+    }
+}
+```
+#### 优势
+单条指令完成S盒核心操作
+
+比AES-NI更高效（专用SM4指令）
+
+支持512位向量化（AVX512），同时处理16个分组
+
+与线性变换指令（VPROLD）完美配合
+
+功耗更低，性能更高
+### 实验结果
+测试所用明文字符串为"SDUCST"：
+
+具体结果参考图片project1-a
