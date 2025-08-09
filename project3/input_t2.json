@@ -1,0 +1,39 @@
+const { wasm: wasmTester } = require("circom_tester");
+const { groth16 } = require("snarkjs");
+const { poseidon } = require("circomlibjs");
+
+async function main() {
+    // 1. 编译电路
+    const circuit = await wasmTester("poseidon2.circom");
+    
+    // 2. 准备输入数据
+    const inputs = {
+        in_private: [
+            "12345678901234567890123456789012",  // 输入1
+            "98765432109876543210987654321098"   // 输入2
+        ]
+    };
+    
+    // 3. 计算预期哈希值 (使用JavaScript实现作为参考)
+    const hash = await poseidon(inputs.in_private);
+    inputs.hash = hash.toString();
+    
+    // 4. 生成见证
+    const witness = await circuit.calculateWitness(inputs);
+    
+    // 5. Groth16设置
+    const zkey = await groth16.setup(circuit);
+    
+    // 6. 生成证明
+    const { proof, publicSignals } = await groth16.prove(zkey, witness);
+    
+    console.log("Proof:", proof);
+    console.log("Public Signals:", publicSignals);
+    
+    // 7. 验证证明
+    const verificationKey = await groth16.exportVerificationKey(zkey);
+    const isValid = await groth16.verify(verificationKey, publicSignals, proof);
+    console.log("Verification:", isValid ? "SUCCESS" : "FAILED");
+}
+
+main().catch(console.error);
